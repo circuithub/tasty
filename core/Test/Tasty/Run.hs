@@ -33,9 +33,7 @@ import GHC.Conc (labelThread)
 import Prelude  -- Silence AMP and FTP import warnings
 
 #ifdef MIN_VERSION_unbounded_delays
-import Control.Concurrent.Timeout (timeout)
-#else
-import System.Timeout (timeout)
+import Control.Concurrent.Thread.Delay (delay)
 #endif
 
 import Test.Tasty.Core
@@ -47,6 +45,11 @@ import Test.Tasty.Options.Core
 import Test.Tasty.Runners.Reducers
 import Test.Tasty.Runners.Utils (timed, forceElements)
 import Test.Tasty.Providers.ConsoleFormat (noResultDetails)
+
+#ifndef MIN_VERSION_unbounded_delays
+delay :: Int -> IO ()
+delay = threadDelay
+#endif
 
 -- | Current status of a test
 data Status
@@ -169,19 +172,21 @@ executeTest action statusVar timeoutOpt inits fins = mask $ \restore -> do
     applyTimeout :: Timeout -> IO Result -> IO Result
     applyTimeout NoTimeout a = a
     applyTimeout (Timeout t tstr) a = do
-      let
-        timeoutResult =
-          Result
-            { resultOutcome = Failure $ TestTimedOut t
-            , resultDescription =
-                "Timed out after " ++ tstr
-            , resultShortDescription = "TIMEOUT"
-            , resultTime = fromIntegral t
-            , resultDetailsPrinter = noResultDetails
-            }
       -- If compiled with unbounded-delays then t' :: Integer, otherwise t' :: Int
       let t' = fromInteger (min (max 0 t) (toInteger (maxBound :: Int64)))
-      fromMaybe timeoutResult <$> timeout t' a
+      res <- race (wait =<< async a) (putStrLn "Starting delay" >> delay t' >> putStrLn "Delay expired")
+      case res of
+        Left ok -> pure ok
+        Right () ->
+          pure
+            Result
+              { resultOutcome = Failure $ TestTimedOut t
+              , resultDescription =
+                  "Timed out after " ++ tstr
+              , resultShortDescription = "TIMEOUT"
+              , resultTime = fromIntegral t
+              , resultDetailsPrinter = noResultDetails
+              }
 
     -- destroyResources should not be interrupted by an exception
     -- Here's how we ensure this:

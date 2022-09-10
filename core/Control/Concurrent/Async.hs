@@ -39,7 +39,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 {-# LANGUAGE DeriveDataTypeable, MagicHash, UnboxedTuples #-}
 
 module Control.Concurrent.Async (
-  async, withAsync, wait, asyncThreadId, cancel, concurrently
+  async, withAsync, wait, asyncThreadId, cancel, concurrently, race
   ) where
 
 import Control.Concurrent.STM
@@ -206,6 +206,23 @@ concurrently left right = concurrently' left right (collect [])
         case e of
             Left ex -> throwIO ex
             Right r -> collect (r:xs) m
+
+-- | Run two @IO@ actions concurrently, and return the first to
+-- finish.  The loser of the race is 'cancel'led.
+--
+-- > race left right =
+-- >   withAsync left $ \a ->
+-- >   withAsync right $ \b ->
+-- >   waitEither a b
+--
+race :: IO a -> IO b -> IO (Either a b)
+race left right = concurrently' left right collect
+  where
+    collect m = do
+        e <- m
+        case e of
+            Left ex -> throwIO ex
+            Right r -> return r
 
 concurrently' :: IO a -> IO b
              -> (IO (Either SomeException (Either a b)) -> IO r)
